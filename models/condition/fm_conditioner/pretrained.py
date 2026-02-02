@@ -3,13 +3,20 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import os
+import sys
+
+# Ensure local fm package is importable when fm_conditioner is not installed via pip
+_fm_conditioner_dir = os.path.dirname(os.path.abspath(__file__))
+if _fm_conditioner_dir not in sys.path:
+    sys.path.insert(0, _fm_conditioner_dir)
+
 import fm
 import torch
 from argparse import Namespace
 import warnings
 import urllib
 from pathlib import Path
-import os
 
 
 def load_model_and_alphabet(model_name):

@@ -114,7 +114,7 @@ dependencies:
     - pyct==0.5.0
     - pynndescent==0.5.12
     - pyparsing==3.0.9
-    - python-graphviz==0.20.1
+    - graphviz==0.20.1
     - pyviz-comms==3.0.2
     - pywavelets==1.4.1
     - pyyaml==6.0
@@ -148,5 +148,5 @@ dependencies:
     - xyzservices==2024.4.0
     - yarl==1.9.2
     - zipp==3.15.0
-prefix: /your_own_path/anaconda3/envs/RNADiffFold
+prefix: ~/anaconda3/envs/RNADiffFold
 

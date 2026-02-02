@@ -60,7 +60,7 @@ The predict results for each sequence will be stored in the `./evaluation/result
 We provide the predict script for user to predict the secondary structure of the RNA sequence. Users can put the RNA sequence data in `./prediction/predict_data` in fasta format. Then, run the following command to predict the secondary structure:
 
 ```bash
-python prediction/predict.py
+python prediction/prediction.py
 ```
 The predict results for each sequence will be stored in the `./prediction/predict_results/ct_files` directory.
 

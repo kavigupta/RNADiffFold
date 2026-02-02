@@ -1,6 +1,7 @@
 
 # -*- coding: utf-8 -*-
 import math
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,10 +10,12 @@ from models.diffusion_multinomial import MultinomialDiffusion
 from models.layers import SegmentationUnet2DCondition
 from models.condition.u_conditioner import Unet_conditioner
 from models.condition.fm_conditioner.pretrained import load_model_and_alphabet_local
-import lightning.pytorch as pl
 
 CH_FOLD = 1
-cond_ckpt_path = '../ckpt/cond_ckpt'
+# Resolve relative to repo root so prediction/training work from any cwd
+_models_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.dirname(_models_dir)
+cond_ckpt_path = join(_repo_root, 'ckpt', 'cond_ckpt')
 
 
 def add_model_args(parser):
