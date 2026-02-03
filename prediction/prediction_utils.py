@@ -252,8 +252,54 @@ def paired(x, y):
         return 0
 
 
-# 产生RNA二级结构pair probability的算法
+# Pair scores for one-hot (A, U, C, G) indices: A=0, U=1, C=2, G=3
+_PAIR_MATRIX = np.array(
+    [
+        [0, 2, 0, 0],      # A with A,U,C,G
+        [2, 0, 0, 0.8],    # U
+        [0, 0, 0, 3],      # C
+        [0, 0.8, 3, 0],    # G
+    ],
+    dtype=np.float64,
+)
+_GAUSS_30 = np.array([math.exp(-0.5 * (x * x)) for x in range(30)], dtype=np.float64)
+
+
+# 产生RNA二级结构pair probability的算法 (vectorized)
 def creatmat(data):
+    data = np.asarray(data)
+    L = len(data)
+    if L == 0:
+        return np.zeros((0, 0))
+    # P[i,j] = paired(data[i], data[j]) via one-hot @ pair_matrix @ one-hot
+    P = data @ _PAIR_MATRIX @ data.T
+    coeff1 = np.zeros((L, L), dtype=np.float64)
+    active = np.ones((L, L), dtype=bool)
+    for add in range(30):
+        row_2d = np.arange(L, dtype=np.intp)[:, np.newaxis] - add
+        col_2d = np.arange(L, dtype=np.intp)[np.newaxis, :] + add
+        valid = (row_2d >= 0) & (col_2d < L)
+        row_clip = np.clip(row_2d, 0, L - 1)
+        col_clip = np.clip(col_2d, 0, L - 1)
+        contrib = P[row_clip, col_clip] * _GAUSS_30[add]
+        coeff1 += np.where(active & valid, contrib, 0.0)
+        active = active & valid & (P[row_clip, col_clip] > 0)
+    coeff2 = np.zeros((L, L), dtype=np.float64)
+    active2 = coeff1 > 0
+    for add in range(1, 30):
+        row_2d = np.arange(L, dtype=np.intp)[:, np.newaxis] + add
+        col_2d = np.arange(L, dtype=np.intp)[np.newaxis, :] - add
+        valid = (row_2d < L) & (col_2d >= 0)
+        row_clip = np.clip(row_2d, 0, L - 1)
+        col_clip = np.clip(col_2d, 0, L - 1)
+        contrib = P[row_clip, col_clip] * _GAUSS_30[add]
+        coeff2 += np.where(active2 & valid, contrib, 0.0)
+        active2 = active2 & valid & (P[row_clip, col_clip] > 0)
+    return coeff1 + coeff2
+
+
+# 产生RNA二级结构pair probability的算法 (original loop version)
+def creatmat_slow(data):
     mat = np.zeros([len(data), len(data)])
     for i in range(len(data)):
         for j in range(len(data)):
