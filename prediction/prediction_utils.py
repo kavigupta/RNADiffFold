@@ -6,6 +6,7 @@ import random
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 import math
 from typing import List, Sequence, Tuple
 import collections
@@ -213,6 +214,49 @@ def get_data(file_path, alphabet):
     seq_length = torch.tensor(seq_len_list).long()
     tokens = generate_token_batch(alphabet, seq_list)
     return data_fcn_2, tokens, seq_encoding_pad, seq_length, name_list, set_max_len, seq_list, seq_len_list
+
+
+def get_data_from_onehot(onehot, alphabet):
+    """
+    Build model inputs from batch one-hot encoding (B x L x 4), reusing get_data logic.
+    onehot: torch.Tensor, shape (B, L, 4) with A,U,C,G order. Kept as tensor throughout.
+    seq_lengths and set_max_len are computed from the first all-zero row per sample.
+    Returns: (data_fcn_2, tokens, seq_encoding_pad, seq_length, set_max_len) same types as get_data().
+    """
+    if not torch.is_tensor(onehot):
+        raise TypeError("onehot must be a torch.Tensor, shape (B, L, 4)")
+    if onehot.ndim != 3 or onehot.shape[2] != 4:
+        raise ValueError("onehot must be shape (B, L, 4)")
+    B, L, _ = onehot.shape
+    row_sums = onehot.abs().sum(dim=-1)
+    seq_lengths = []
+    for b in range(B):
+        zeros = (row_sums[b] == 0).nonzero(as_tuple=True)[0]
+        length = int(zeros[0].item()) if zeros.numel() > 0 else L
+        seq_lengths.append(length)
+    seq_lengths = torch.tensor(seq_lengths, dtype=torch.long, device=onehot.device)
+    max_len = int(seq_lengths.max().item())
+    set_max_len = (max_len // 80 + int(max_len % 80 != 0)) * 80
+    seq_list = [
+        encoding2seq(onehot[b, : int(seq_lengths[b].item())].cpu().numpy())
+        for b in range(B)
+    ]
+    if L >= set_max_len:
+        seq_encoding_pad = onehot[:, :set_max_len, :].float()
+    else:
+        seq_encoding_pad = F.pad(onehot, (0, 0, 0, set_max_len - L)).float()
+    data_fcn_2_list = [
+        get_data_fcn(
+            F.pad(onehot[b, : int(seq_lengths[b].item())], (0, 0, 0, set_max_len - int(seq_lengths[b].item()))).cpu().numpy(),
+            int(seq_lengths[b].item()),
+            set_max_len,
+        )
+        for b in range(B)
+    ]
+    data_fcn_2 = torch.from_numpy(np.stack(data_fcn_2_list, axis=0)).float().to(onehot.device)
+    seq_length = seq_lengths
+    tokens = generate_token_batch(alphabet, seq_list)
+    return data_fcn_2, tokens, seq_encoding_pad, seq_length, set_max_len
 
 
 def get_data_fcn(data_seq, data_length, set_length):
