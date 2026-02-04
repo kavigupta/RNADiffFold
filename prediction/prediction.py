@@ -31,7 +31,7 @@ def prediction(config, model, data_fcn_2, tokens, seq_encoding_pad, seq_length, 
                                       set_max_len, contact_masks, seq_encoding_pad, do_pbar=do_pbar)
             pred_x0_copy_dict[seed_ind] = pred_x0
 
-        for i in tqdm(range(pred_x0.shape[0]), desc=f'vote for the most common structure', total=pred_x0.shape[0]):
+        for i in range(pred_x0.shape[0]):
             pred_x0_i_list = [pred_x0_copy_dict[num_copy][i].squeeze().cpu().numpy() for num_copy in select_seeds]
             best_pred_x0_i = torch.Tensor(vote4struct(pred_x0_i_list))
             best_pred_x0_i_list.append(best_pred_x0_i)
