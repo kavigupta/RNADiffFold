@@ -6,7 +6,7 @@ from prediction_utils import *
 from tqdm import tqdm
 
 
-def prediction(config, model, data_fcn_2, tokens, seq_encoding_pad, seq_length, set_max_len):
+def prediction(config, model, data_fcn_2, tokens, seq_encoding_pad, seq_length, set_max_len, do_pbar=True):
     device = config.device
     model.to(device)
     model.eval()
@@ -28,7 +28,7 @@ def prediction(config, model, data_fcn_2, tokens, seq_encoding_pad, seq_length, 
             torch.manual_seed(seed_ind)
 
             pred_x0, _ = model.sample(batch_size, data_fcn_2, tokens,
-                                      set_max_len, contact_masks, seq_encoding_pad)
+                                      set_max_len, contact_masks, seq_encoding_pad, do_pbar=do_pbar)
             pred_x0_copy_dict[seed_ind] = pred_x0
 
         for i in tqdm(range(pred_x0.shape[0]), desc=f'vote for the most common structure', total=pred_x0.shape[0]):

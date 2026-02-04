@@ -308,14 +308,17 @@ class MultinomialDiffusion(nn.Module):
         return -vb_loss
 
     @torch.no_grad()
-    def sample(self, num_samples, fm_condition, u_condition, contact_masks, set_max_len, seq_encoding):
+    def sample(self, num_samples, fm_condition, u_condition, contact_masks, set_max_len, seq_encoding, do_pbar=True):
         b = num_samples
         data_shape = (1, int(set_max_len), int(set_max_len))
 
         device = self.log_alphas.device
         uniform_logits = torch.zeros((b, self.K) + data_shape, device=device)
         log_z = self.log_sample_categorical(uniform_logits)
-        for i in tqdm(reversed(range(0, self.time_steps)), desc='sampling loop time step', total=self.time_steps):
+        iterable = reversed(range(0, self.time_steps))
+        if do_pbar:
+            iterable = tqdm(iterable, desc='sampling loop time step', total=self.time_steps)
+        for i in iterable:
             t = torch.full((b,), i, device=device, dtype=torch.long)
             log_z, model_log_prob = self.p_sample(log_x_t=log_z,
                                                   t=t,

@@ -143,14 +143,15 @@ class DiffusionRNA2dPrediction(nn.Module):
                data_seq_raw,
                set_max_len,
                contact_masks,
-               seq_encoding
+               seq_encoding,
+               do_pbar=True
                ):
         fm_condition = self.get_fm_embedding(data_seq_raw, set_max_len)
 
         u_condition = self.get_ufold_condition(data_fcn_2)
 
         pred_x_0, model_prob = self.diffusion.sample(
-            num_samples, fm_condition, u_condition, contact_masks, set_max_len, seq_encoding
+            num_samples, fm_condition, u_condition, contact_masks, set_max_len, seq_encoding, do_pbar=do_pbar
         )
 
         return pred_x_0, model_prob
