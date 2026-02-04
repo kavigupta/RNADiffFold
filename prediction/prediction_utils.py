@@ -378,6 +378,15 @@ def get_model_prediction(args):
     return model, alphabet
 
 
+def load_model_for_prediction(config):
+    """Build model from config.model, load checkpoint from config.model_ckpt_path, return model, alphabet."""
+    model, alphabet = get_model_prediction(config.model)
+    print(f"Load model checkpoint from: {config.model_ckpt_path}")
+    checkpoint = torch.load(config.model_ckpt_path, map_location='cpu')
+    model.load_state_dict(checkpoint['model'])
+    return model, alphabet
+
+
 def vote4struct(struc_list: List[np.ndarray]) -> np.ndarray:
     """
     Vote for the structure with the most votes.

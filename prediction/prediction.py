@@ -50,12 +50,7 @@ if __name__ == '__main__':
 
     set_seed(config.seed)
 
-    model, alphabet = get_model_prediction(config.model)
-
-    # model load checkpoint
-    print(f"Load model checkpoint from: {config.model_ckpt_path}")
-    checkpoint = torch.load(config.model_ckpt_path, map_location='cpu')
-    model.load_state_dict(checkpoint['model'])
+    model, alphabet = load_model_for_prediction(config)
 
     # file_list = os.listdir(join(ROOT_PATH, 'predict_data/multi_conformation'))
     # for file in file_list:
