@@ -236,7 +236,7 @@ def get_data_from_onehot(onehot, alphabet):
         seq_lengths.append(length)
     seq_lengths = torch.tensor(seq_lengths, dtype=torch.long, device=onehot.device)
     max_len = int(seq_lengths.max().item())
-    set_max_len = (max_len // 80 + int(max_len % 80 != 0)) * 80
+    set_max_len = max((max_len // 80 + int(max_len % 80 != 0)) * 80, 160)
     seq_list = [
         encoding2seq(onehot[b, : int(seq_lengths[b].item())].cpu().numpy())
         for b in range(B)
