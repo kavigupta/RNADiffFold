@@ -214,6 +214,12 @@ class MultinomialDiffusion(nn.Module):
         x_t_minus_1 = self.log_sample_categorical(log_probs)
         return x_t_minus_1, log_probs
 
+    # p(xt-1|xt) -> xt-1 with gradients enabled for DDPO
+    def p_sample_with_grad(self, log_x_t, t, fm_condition, u_condition, seq_encoding):
+        log_probs = self.p_pred(log_x_t, t, fm_condition, u_condition, seq_encoding)
+        x_t_minus_1 = self.log_sample_categorical(log_probs)
+        return x_t_minus_1, log_probs
+
     # L_T,prior matching term
     def kl_prior(self, log_x_0):
         b = log_x_0.size(0)
@@ -328,6 +334,55 @@ class MultinomialDiffusion(nn.Module):
 
         model_prob = torch.exp(model_log_prob)[:, 1, :, :, :] * contact_masks
         return log_onehot_to_index(log_z) * contact_masks, model_prob
+
+    def sample_with_log_probs(self, num_samples, fm_condition, u_condition, contact_masks, set_max_len, seq_encoding, do_pbar=True):
+        """Sample trajectories with accumulated log-probabilities for DDPO policy gradient.
+
+        Returns:
+            - pred_x0: (B, 1, L, L) LongTensor, hard contact map
+            - model_prob: (B, 1, L, L) FloatTensor, soft paired probabilities at t=0
+            - trajectory_log_probs: (B,) FloatTensor, sum of log p(x_{t-1}|x_t) over all t and spatial dims
+        """
+        b = num_samples
+        data_shape = (1, int(set_max_len), int(set_max_len))
+        device = self.log_alphas.device
+
+        # Initialize from uniform noise
+        uniform_logits = torch.zeros((b, self.K) + data_shape, device=device)
+        log_z = self.log_sample_categorical(uniform_logits)
+
+        # Accumulate log probs per sequence
+        trajectory_log_probs = torch.zeros(b, device=device)
+
+        iterable = reversed(range(0, self.time_steps))
+        if do_pbar:
+            iterable = tqdm(iterable, desc='sampling loop time step (DDPO)', total=self.time_steps)
+
+        for i in iterable:
+            t = torch.full((b,), i, device=device, dtype=torch.long)
+            log_z, log_probs = self.p_sample_with_grad(
+                log_x_t=log_z,
+                t=t,
+                fm_condition=fm_condition,
+                u_condition=u_condition * contact_masks,
+                seq_encoding=seq_encoding
+            )
+
+            # Gather log prob of sampled token at each position
+            # log_probs: (B, K, 1, L, L)
+            # log_z:     (B, 1, L, L) LongTensor (values 0 or 1)
+            sampled_log_p = log_probs.gather(1, log_z.unsqueeze(1))  # (B, 1, 1, L, L)
+
+            # Mask and accumulate: sum over spatial dims, apply contact mask
+            mask_2d = contact_masks.squeeze(1)  # (B, L, L)
+            sampled_log_p_masked = sampled_log_p.squeeze(1).squeeze(1) * mask_2d  # (B, L, L)
+            trajectory_log_probs += sampled_log_p_masked.sum(dim=(-2, -1))
+
+        # Final model probabilities at t=0
+        model_prob = torch.exp(log_probs)[:, 1, :, :, :] * contact_masks
+        pred_x0 = log_onehot_to_index(log_z) * contact_masks
+
+        return pred_x0, model_prob, trajectory_log_probs
 
     @torch.no_grad()
     def sample_chain(self, num_samples, fm_condition, u_condition, contact_masks, set_max_len, seq_encoding):
