@@ -210,9 +210,7 @@ class MultinomialDiffusion(nn.Module):
     # p(xt-1|xt) -> xt-1
     @torch.no_grad()
     def p_sample(self, log_x_t, t, fm_condition, u_condition, seq_encoding):
-        log_probs = self.p_pred(log_x_t, t, fm_condition, u_condition, seq_encoding)
-        x_t_minus_1 = self.log_sample_categorical(log_probs)
-        return x_t_minus_1, log_probs
+        return self.p_sample_with_grad(log_x_t, t, fm_condition, u_condition, seq_encoding)
 
     # p(xt-1|xt) -> xt-1 with gradients enabled for DDPO
     def p_sample_with_grad(self, log_x_t, t, fm_condition, u_condition, seq_encoding):
