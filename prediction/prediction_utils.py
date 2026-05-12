@@ -216,11 +216,14 @@ def get_data(file_path, alphabet):
     return data_fcn_2, tokens, seq_encoding_pad, seq_length, name_list, set_max_len, seq_list, seq_len_list
 
 
-def get_data_from_onehot(onehot, alphabet):
+def get_data_from_onehot(onehot, alphabet, seq_lengths=None):
     """
     Build model inputs from batch one-hot encoding (B x L x 4), reusing get_data logic.
     onehot: torch.Tensor, shape (B, L, 4) with A,U,C,G order. Kept as tensor throughout.
-    seq_lengths and set_max_len are computed from the first all-zero row per sample.
+    seq_lengths: optional (B,) LongTensor or list of ints giving the true per-sample
+        length. If None, lengths are inferred from the first all-zero row per sample
+        (which assumes zeros only appear as end padding — not true for inputs with
+        internal N's).
     Returns: (data_fcn_2, tokens, seq_encoding_pad, seq_length, set_max_len) same types as get_data().
     """
     if not torch.is_tensor(onehot):
@@ -228,13 +231,19 @@ def get_data_from_onehot(onehot, alphabet):
     if onehot.ndim != 3 or onehot.shape[2] != 4:
         raise ValueError("onehot must be shape (B, L, 4)")
     B, L, _ = onehot.shape
-    row_sums = onehot.abs().sum(dim=-1)
-    seq_lengths = []
-    for b in range(B):
-        zeros = (row_sums[b] == 0).nonzero(as_tuple=True)[0]
-        length = int(zeros[0].item()) if zeros.numel() > 0 else L
-        seq_lengths.append(length)
-    seq_lengths = torch.tensor(seq_lengths, dtype=torch.long, device=onehot.device)
+    if seq_lengths is None:
+        row_sums = onehot.abs().sum(dim=-1)
+        seq_lengths = []
+        for b in range(B):
+            zeros = (row_sums[b] == 0).nonzero(as_tuple=True)[0]
+            length = int(zeros[0].item()) if zeros.numel() > 0 else L
+            seq_lengths.append(length)
+        seq_lengths = torch.tensor(seq_lengths, dtype=torch.long, device=onehot.device)
+    else:
+        if not torch.is_tensor(seq_lengths):
+            seq_lengths = torch.tensor(list(seq_lengths), dtype=torch.long, device=onehot.device)
+        if seq_lengths.shape != (B,):
+            raise ValueError(f"seq_lengths must have shape ({B},), got {tuple(seq_lengths.shape)}")
     max_len = int(seq_lengths.max().item())
     set_max_len = max((max_len // 80 + int(max_len % 80 != 0)) * 80, 160)
     seq_list = [
