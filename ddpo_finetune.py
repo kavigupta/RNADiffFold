@@ -83,7 +83,6 @@ class DDPOTrainer:
         n_samples=4,
         lr=1e-5,
         kl_weight=0.1,
-        accumulation_steps=1
     ):
         """
         Args:
@@ -95,7 +94,6 @@ class DDPOTrainer:
                 added to the policy-gradient loss. The reference is a frozen
                 snapshot of `model` taken at construction time; without it,
                 DDPO reliably collapses to degenerate high-reward modes.
-            accumulation_steps: gradient accumulation steps
         """
         # Advantage normalization in ddpo_step divides by the std across the
         # n_samples axis; with a single sample that std is zero (NaN under
@@ -109,7 +107,6 @@ class DDPOTrainer:
         self.n_samples = n_samples
         self.lr = lr
         self.kl_weight = kl_weight
-        self.accumulation_steps = accumulation_steps
 
         # Get FM tokenizer
         self.alphabet = model.get_alphabet()
