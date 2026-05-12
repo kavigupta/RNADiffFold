@@ -48,38 +48,31 @@ def load_model_from_checkpoint(checkpoint_path, device="cuda:0"):
     return model
 
 
-def load_dms_data(chrom, canonical_bases_only=True, max_samples=None):
+def load_dms_data(chrom, healsdms_path, canonical_bases_only=True, max_samples=None):
     """Load DMS data via the healsdms pipeline.
 
     Args:
         chrom: chromosome (e.g., "chr1")
+        healsdms_path: filesystem path to the heals-dms repo root
         canonical_bases_only: whether to use only canonical bases
         max_samples: maximum number of samples to load (None = all)
 
     Returns:
         dataset: DDPODataset instance
     """
-    # Import from healsdms
-    sys.path.insert(0, "/mnt/md0/heals-dms")
+    sys.path.insert(0, healsdms_path)
     from healsdms.accessibility_model.accessibility_vs_folding import contiguous_regions
     from ddpo_finetune import DDPODataset
 
-    # Load contiguous regions for the given chromosome
-    try:
-        contiguous_regions_iter = contiguous_regions(chrom, canonical_bases_only)
+    contiguous_regions_iter = contiguous_regions(chrom, canonical_bases_only)
 
-        # Optionally limit samples
-        if max_samples:
-            import itertools
-            contiguous_regions_iter = itertools.islice(contiguous_regions_iter, max_samples)
+    if max_samples:
+        import itertools
+        contiguous_regions_iter = itertools.islice(contiguous_regions_iter, max_samples)
 
-        dataset = DDPODataset(contiguous_regions_iter)
-        print(f"Loaded {len(dataset)} sequences from {chrom}")
-        return dataset
-    except Exception as e:
-        print(f"Error loading DMS data: {e}")
-        print("Make sure you're running from the /mnt/md0/heals-dms directory")
-        raise
+    dataset = DDPODataset(contiguous_regions_iter)
+    print(f"Loaded {len(dataset)} sequences from {chrom}")
+    return dataset
 
 
 def main():
@@ -135,6 +128,12 @@ def main():
         help="Torch device",
     )
     parser.add_argument(
+        "--healsdms_path",
+        type=str,
+        required=True,
+        help="Path to the heals-dms repo root (provides healsdms package)",
+    )
+    parser.add_argument(
         "--output_dir",
         type=str,
         default="./RNADiffFold/ckpt/model_ckpt",
@@ -164,7 +163,7 @@ def main():
     model = load_model_from_checkpoint(ckpt_path, device=args.device)
 
     # Load DMS dataset
-    dataset = load_dms_data(args.chrom)
+    dataset = load_dms_data(args.chrom, args.healsdms_path)
 
     # Create collate function for batch processing
     def collate_ddpo(batch):
