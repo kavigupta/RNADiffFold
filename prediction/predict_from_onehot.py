@@ -4,11 +4,11 @@ Predict RNA secondary structure from batch one-hot encoded sequences (B x L x 4)
 """
 import torch
 
-from prediction_utils import (
+from .prediction_utils import (
     get_data_from_onehot,
     set_seed,
 )
-from prediction import prediction
+from . import prediction
 
 # Model expects onehot columns in this order: A=0, U=1, C=2, G=3
 _MODEL_ORDER = "AUCG"
