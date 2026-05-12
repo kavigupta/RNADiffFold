@@ -16,35 +16,38 @@ from prediction.predict_from_onehot import _onehot_to_model_order
 from prediction.prediction_utils import get_data_from_onehot
 
 
-def pearson_correlation(pred, target, eps=1e-8):
-    """Differentiable Pearson correlation coefficient, handling NaN.
+def pearson_correlation_batched(pred, target, eps=1e-8):
+    """Differentiable per-row Pearson correlation, vectorized across the batch,
+    handling NaN in `target` per row.
 
     Args:
-        pred: FloatTensor (N,)
-        target: FloatTensor (N,) with NaN at missing values
+        pred:   FloatTensor (B, N)
+        target: FloatTensor (B, N), NaN at missing positions (per row)
 
     Returns:
-        scalar: Pearson r in [-1, 1], or 0 if insufficient valid data
+        FloatTensor (B,): Pearson r per row; rows with <2 valid entries return 0.
     """
-    mask = ~torch.isnan(target)
-    if mask.sum() < 2:
-        return torch.tensor(0.0, device=pred.device, dtype=pred.dtype)
+    mask = ~torch.isnan(target)                                    # (B, N)
+    n_valid = mask.sum(dim=1)                                      # (B,)
+    denom = n_valid.clamp(min=1).to(pred.dtype)                    # avoid 0-div
 
-    pred = pred[mask]
-    target = target[mask]
+    target_clean = torch.where(mask, target, torch.zeros_like(target))
+    pred_masked = pred * mask                                      # zero invalid
 
-    pred_mean = pred.mean()
-    target_mean = target.mean()
+    pred_mean = pred_masked.sum(dim=1) / denom                     # (B,)
+    target_mean = target_clean.sum(dim=1) / denom                  # (B,)
 
-    pred_centered = pred - pred_mean
-    target_centered = target - target_mean
+    pred_centered = (pred - pred_mean.unsqueeze(1)) * mask
+    target_centered = (target_clean - target_mean.unsqueeze(1)) * mask
 
-    cov = (pred_centered * target_centered).mean()
-    pred_std = pred_centered.norm()
-    target_std = target_centered.norm()
+    cov = (pred_centered * target_centered).sum(dim=1) / denom
+    pred_norm = pred_centered.norm(dim=1)
+    target_norm = target_centered.norm(dim=1)
+    corr = cov / (pred_norm * target_norm + eps)
 
-    corr = cov / (pred_std * target_std + eps)
-    return corr
+    # Match the unbatched contract: insufficient valid data -> 0.
+    enough = n_valid >= 2
+    return torch.where(enough, corr, torch.zeros_like(corr))
 
 
 class DDPODataset(torch.utils.data.Dataset):
@@ -183,16 +186,8 @@ class DDPOTrainer:
         # Extract center window
         paired_prob_center = paired_prob[:, center_start:center_end]  # (B, L_center)
 
-        # Compute correlations per sequence
-        batch_size = paired_prob_center.shape[0]
-        rewards = []
-        for i in range(batch_size):
-            r = pearson_correlation(paired_prob_center[i], dms_vals[i])
-            # We want a negative correlation, since high DMS = low pairing.
-            negative_r = -r
-            rewards.append(negative_r)
-
-        return torch.stack(rewards)
+        # We want a negative correlation, since high DMS = low pairing.
+        return -pearson_correlation_batched(paired_prob_center, dms_vals)
 
     def ddpo_step(self, batch_x, batch_dms):
         """Single DDPO training step.
