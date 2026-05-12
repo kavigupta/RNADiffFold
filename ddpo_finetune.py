@@ -268,7 +268,7 @@ class DDPOTrainer:
 
         return loss, rewards.mean().item()
 
-    def train(self, train_loader, n_epochs, checkpoint_dir="./RNADiffFold/ckpt/model_ckpt"):
+    def train(self, train_loader, n_epochs, checkpoint_dir="./ckpt/model_ckpt"):
         """Train for n_epochs.
 
         Args:
@@ -314,13 +314,8 @@ class DDPOTrainer:
                 f"LR: {self.optimizer.param_groups[0]['lr']:.2e}"
             )
 
-            # Save checkpoint
-            if (epoch + 1) % 10 == 0:
-                ckpt_path = Path(checkpoint_dir) / f"ddpo_dms_epoch_{epoch+1}.pt"
-                torch.save(self.model.state_dict(), ckpt_path)
-                print(f"Saved checkpoint to {ckpt_path}")
+            ckpt_path = Path(checkpoint_dir) / f"{epoch+1}.pt"
+            torch.save(self.model.state_dict(), ckpt_path)
+            print(f"Saved checkpoint to {ckpt_path}")
 
-        # Save final checkpoint
-        final_ckpt = Path(checkpoint_dir) / "ddpo_dms.pt"
-        torch.save(self.model.state_dict(), final_ckpt)
-        print(f"Training complete. Final checkpoint: {final_ckpt}")
+        print(f"Training complete. Checkpoints in: {checkpoint_dir}")

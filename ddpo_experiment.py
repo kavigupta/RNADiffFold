@@ -136,8 +136,14 @@ def main():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./RNADiffFold/ckpt/model_ckpt",
-        help="Directory to save checkpoints",
+        default="./ckpt/model_ckpt",
+        help="Directory to save checkpoints (run subdirectory created inside)",
+    )
+    parser.add_argument(
+        "--run_id",
+        type=str,
+        required=True,
+        help="Run identifier; checkpoints land in <output_dir>/<run_id>/<epoch>.pt",
     )
 
     args = parser.parse_args()
@@ -157,7 +163,7 @@ def main():
     if args.checkpoint_path:
         ckpt_path = args.checkpoint_path
     else:
-        ckpt_path = f"./RNADiffFold/ckpt/model_ckpt/{args.checkpoint}.seed.2023.pt"
+        ckpt_path = f"./ckpt/model_ckpt/{args.checkpoint}.seed.2023.pt"
 
     device = torch.device(args.device)
     model = load_model_from_checkpoint(ckpt_path, device=args.device)
@@ -197,7 +203,8 @@ def main():
     )
 
     # Train
-    trainer.train(loader, n_epochs=args.n_epochs, checkpoint_dir=args.output_dir)
+    run_dir = Path(args.output_dir) / args.run_id
+    trainer.train(loader, n_epochs=args.n_epochs, checkpoint_dir=run_dir)
 
     print("Done!")
 
