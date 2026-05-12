@@ -272,7 +272,7 @@ class DDPOTrainer:
         """Train for n_epochs.
 
         Args:
-            train_loader: DataLoader yielding (x_batch, dms_batch, seq_strs)
+            train_loader: DataLoader yielding (x_batch, dms_batch)
             n_epochs: number of epochs
             checkpoint_dir: where to save checkpoints
         """
