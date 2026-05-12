@@ -97,6 +97,13 @@ class DDPOTrainer:
                 DDPO reliably collapses to degenerate high-reward modes.
             accumulation_steps: gradient accumulation steps
         """
+        # Advantage normalization in ddpo_step divides by the std across the
+        # n_samples axis; with a single sample that std is zero (NaN under
+        # unbiased estimator) and the policy gradient blows up. Require >1.
+        assert n_samples > 1, (
+            f"n_samples must be > 1 for advantage normalization, got {n_samples}"
+        )
+
         self.model = model
         self.device = device
         self.n_samples = n_samples
@@ -145,21 +152,31 @@ class DDPOTrainer:
         )
         self.scheduler = None  # created in train() once n_epochs is known
 
-    def compute_reward(self, model_prob, dms_vals, center_start=80, center_end=160):
+    def compute_reward(self, model_prob, dms_vals, full_len):
         """Compute correlation reward between predicted structure and DMS.
 
         Args:
             model_prob: (B, 1, L_pad, L_pad) soft paired probabilities
             dms_vals: (B, L_center) DMS reactivity with NaN at missing positions
-            center_start: start index of center window (context-aware)
-            center_end: end index of center window
+            full_len: unpadded sequence length L (heals-dms emits regions of
+                length 3*L_center with DMS reported only on the center third).
 
         Returns:
             rewards: (B,) scalar per-sequence correlation
         """
-        assert dms_vals.shape[1] == center_end - center_start, (
+        # heals-dms convention: each region has length 3 * L_center, with DMS
+        # reactivity reported only on the center third [L_center, 2*L_center).
+        # Derive the window from full_len instead of hardcoding so the trainer
+        # adapts if regions are emitted at a different size.
+        assert full_len % 3 == 0, (
+            f"full_len {full_len} is not divisible by 3; cannot place center window"
+        )
+        center_len = full_len // 3
+        center_start = center_len
+        center_end = 2 * center_len
+        assert dms_vals.shape[1] == center_len, (
             f"dms_vals length {dms_vals.shape[1]} does not match center window "
-            f"[{center_start}:{center_end}] (size {center_end - center_start})"
+            f"[{center_start}:{center_end}] (size {center_len})"
         )
 
         # Marginal: per-position max probability of being paired
@@ -224,7 +241,7 @@ class DDPOTrainer:
             )
 
             # Compute rewards
-            rewards = self.compute_reward(model_prob, batch_dms)
+            rewards = self.compute_reward(model_prob, batch_dms, full_len)
             all_rewards.append(rewards)
             all_log_probs.append(trajectory_log_probs)
             all_kls.append(trajectory_kl)
