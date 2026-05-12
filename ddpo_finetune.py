@@ -193,7 +193,13 @@ class DDPOTrainer:
         advantages = rewards - rewards.mean(dim=0, keepdim=True)
         advantages = advantages / (advantages.std(dim=0, keepdim=True) + 1e-8)
 
-        # DDPO-SF loss: negative policy gradient
+        # DDPO-SF (score-function) loss: gradient flows only through
+        # `log_probs` (the differentiable trajectory log-probability accumulated
+        # in sample_with_log_probs). `rewards` is computed from `model_prob`,
+        # which still carries a pathwise grad through the final step's logits,
+        # so we must `.detach()` advantages to keep this a pure REINFORCE
+        # estimator. See log_sample_categorical / p_sample_with_grad in
+        # models/diffusion_multinomial.py for the gradient semantics.
         pg_loss = -(log_probs * advantages.detach()).mean()
 
         return pg_loss, rewards.mean().item()
