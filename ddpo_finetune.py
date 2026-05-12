@@ -107,6 +107,18 @@ class DDPOTrainer:
         # Get FM tokenizer
         self.alphabet = model.get_alphabet()
 
+        # Restrict DDPO updates to the denoiser. The U-Fold encoder is loaded
+        # with requires_grad=True (see models/model.py:load_u_conditioner) for
+        # joint training under the supervised objective in train.py, but here
+        # the only learning signal is a noisy REINFORCE estimate of a sparse
+        # per-trajectory reward. Updating a large pretrained conditioning
+        # stack under that signal tends to corrupt the conditioning features
+        # before the policy converges, so we freeze it -- matching how
+        # fm_conditioner is already treated (its forward is wrapped in
+        # torch.no_grad in get_fm_embedding).
+        model.u_conditioner.requires_grad_(False)
+        model.u_conditioner.eval()
+
         # Frozen reference policy for the KL anchor. Deep-copied so subsequent
         # optimizer steps on `model` do not drift the reference. The FM
         # conditioner is frozen in both copies (always run under no_grad), so
