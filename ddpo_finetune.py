@@ -6,6 +6,8 @@ Uses DDPO-SF (score function / REINFORCE) to optimize the diffusion model's deno
 network for maximizing Pearson correlation between predicted structure and DMS reactivity.
 """
 
+import copy
+
 import torch
 from pathlib import Path
 from tqdm import tqdm
@@ -89,7 +91,10 @@ class DDPOTrainer:
             device: torch device
             n_samples: number of sample trajectories per sequence
             lr: learning rate
-            kl_weight: weight for KL regularization (unused for now, reserved for future)
+            kl_weight: weight of per-step KL(policy || frozen reference) anchor
+                added to the policy-gradient loss. The reference is a frozen
+                snapshot of `model` taken at construction time; without it,
+                DDPO reliably collapses to degenerate high-reward modes.
             accumulation_steps: gradient accumulation steps
         """
         self.model = model
@@ -101,6 +106,16 @@ class DDPOTrainer:
 
         # Get FM tokenizer
         self.alphabet = model.get_alphabet()
+
+        # Frozen reference policy for the KL anchor. Deep-copied so subsequent
+        # optimizer steps on `model` do not drift the reference. The FM
+        # conditioner is frozen in both copies (always run under no_grad), so
+        # we share it to halve the FM memory footprint.
+        self.ref_model = copy.deepcopy(model)
+        self.ref_model.fm_conditioner = model.fm_conditioner
+        self.ref_model.eval()
+        for p in self.ref_model.parameters():
+            p.requires_grad_(False)
 
         self.optimizer = torch.optim.Adam(
             [p for p in model.parameters() if p.requires_grad],
@@ -172,27 +187,30 @@ class DDPOTrainer:
         # Sample multiple trajectories
         all_rewards = []
         all_log_probs = []
+        all_kls = []
 
         for sample_idx in range(self.n_samples):
-            # Sample trajectory with log probs
-            pred_x0, model_prob, trajectory_log_probs = self.model.sample_with_log_probs(
+            pred_x0, model_prob, trajectory_log_probs, trajectory_kl = self.model.sample_with_log_probs(
                 batch_size,
                 data_fcn_2,
                 data_seq_raw,
                 set_max_len,
                 contact_masks,
                 seq_encoding,
-                do_pbar=False
+                self.ref_model,
+                do_pbar=False,
             )
 
             # Compute rewards
             rewards = self.compute_reward(model_prob, batch_dms)
             all_rewards.append(rewards)
             all_log_probs.append(trajectory_log_probs)
+            all_kls.append(trajectory_kl)
 
         # Stack: (n_samples, B)
         rewards = torch.stack(all_rewards)  # (n_samples, B)
         log_probs = torch.stack(all_log_probs)  # (n_samples, B)
+        kls = torch.stack(all_kls)  # (n_samples, B)
 
         # Advantage normalization
         advantages = rewards - rewards.mean(dim=0, keepdim=True)
@@ -207,7 +225,12 @@ class DDPOTrainer:
         # models/diffusion_multinomial.py for the gradient semantics.
         pg_loss = -(log_probs * advantages.detach()).mean()
 
-        return pg_loss, rewards.mean().item()
+        # KL anchor to the frozen reference policy. Gradient flows through
+        # the current policy's per-step log_probs (the reference is no-grad
+        # inside sample_with_log_probs).
+        loss = pg_loss + self.kl_weight * kls.mean()
+
+        return loss, rewards.mean().item()
 
     def train(self, train_loader, n_epochs, checkpoint_dir="./RNADiffFold/ckpt/model_ckpt"):
         """Train for n_epochs.

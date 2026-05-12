@@ -163,17 +163,29 @@ class DiffusionRNA2dPrediction(nn.Module):
                                set_max_len,
                                contact_masks,
                                seq_encoding,
-                               do_pbar=True
+                               ref_model,
+                               do_pbar=True,
                                ):
-        """Sample trajectories with accumulated log-probabilities for DDPO."""
+        """Sample trajectories with accumulated log-probabilities and per-step
+        KL(policy || ref) for DDPO."""
         fm_condition = self.get_fm_embedding(data_seq_raw, set_max_len)
         u_condition = self.get_ufold_condition(data_fcn_2)
 
-        pred_x_0, model_prob, trajectory_log_probs = self.diffusion.sample_with_log_probs(
-            num_samples, fm_condition, u_condition, contact_masks, set_max_len, seq_encoding, do_pbar=do_pbar
+        with torch.no_grad():
+            ref_fm_condition = ref_model.get_fm_embedding(data_seq_raw, set_max_len)
+            ref_u_condition = ref_model.get_ufold_condition(data_fcn_2)
+        ref_u_cond_masked = ref_u_condition * contact_masks
+        def ref_p_pred(log_x_t, t):
+            return ref_model.diffusion.p_pred(
+                log_x_t, t, ref_fm_condition, ref_u_cond_masked, seq_encoding
+            )
+
+        pred_x_0, model_prob, trajectory_log_probs, trajectory_kl = self.diffusion.sample_with_log_probs(
+            num_samples, fm_condition, u_condition, contact_masks, set_max_len, seq_encoding,
+            ref_p_pred, do_pbar=do_pbar,
         )
 
-        return pred_x_0, model_prob, trajectory_log_probs
+        return pred_x_0, model_prob, trajectory_log_probs, trajectory_kl
 
     @torch.no_grad()
     def sample_chain(self,
