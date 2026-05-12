@@ -119,6 +119,16 @@ class DDPOTrainer:
         model.u_conditioner.requires_grad_(False)
         model.u_conditioner.eval()
 
+        # FM is meant to be a frozen feature extractor: its forward in
+        # get_fm_embedding runs under torch.no_grad. Assert the invariants
+        # rather than enforcing them here, so a future change to model.py
+        # (e.g. unfreezing FM for joint training) fails loudly instead of
+        # being silently re-frozen by DDPO init.
+        assert not model.fm_conditioner.training, "FM conditioner must be in eval mode for DDPO"
+        assert all(not p.requires_grad for p in model.fm_conditioner.parameters()), (
+            "FM conditioner parameters must be frozen for DDPO"
+        )
+
         # Frozen reference policy for the KL anchor. Deep-copied so subsequent
         # optimizer steps on `model` do not drift the reference. The FM
         # conditioner is frozen in both copies (always run under no_grad), so
