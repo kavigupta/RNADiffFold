@@ -210,6 +210,10 @@ class MultinomialDiffusion(nn.Module):
     # p(xt-1|xt) -> xt-1
     @torch.no_grad()
     def p_sample(self, log_x_t, t, fm_condition, u_condition, seq_encoding):
+        return self.p_sample_with_grad(log_x_t, t, fm_condition, u_condition, seq_encoding)
+
+    # p(xt-1|xt) -> xt-1 with gradients enabled for DDPO
+    def p_sample_with_grad(self, log_x_t, t, fm_condition, u_condition, seq_encoding):
         log_probs = self.p_pred(log_x_t, t, fm_condition, u_condition, seq_encoding)
         x_t_minus_1 = self.log_sample_categorical(log_probs)
         return x_t_minus_1, log_probs
@@ -328,6 +332,76 @@ class MultinomialDiffusion(nn.Module):
 
         model_prob = torch.exp(model_log_prob)[:, 1, :, :, :] * contact_masks
         return log_onehot_to_index(log_z) * contact_masks, model_prob
+
+    def sample_with_log_probs(self, num_samples, fm_condition, u_condition, contact_masks, set_max_len, seq_encoding, ref_p_pred, do_pbar=True):
+        """Sample trajectories with accumulated log-probabilities for DDPO policy gradient.
+
+        Args:
+            ref_p_pred: callable (log_x_t, t) -> log_probs_ref, evaluating the
+                frozen reference policy distribution over x_{t-1} at the same
+                x_t. Used to accumulate the per-step KL(policy || ref) anchor
+                that prevents DDPO reward-hacking collapse.
+
+        Returns:
+            - pred_x0: (B, 1, L, L) LongTensor, hard contact map
+            - model_prob: (B, 1, L, L) FloatTensor, soft paired probabilities at t=0
+            - trajectory_log_probs: (B,) FloatTensor, sum of log p(x_{t-1}|x_t) over all t and spatial dims
+            - trajectory_kl: (B,) FloatTensor, sum of KL(policy || ref) over t and spatial dims
+        """
+        b = num_samples
+        data_shape = (1, int(set_max_len), int(set_max_len))
+        device = self.log_alphas.device
+
+        # Initialize from uniform noise
+        uniform_logits = torch.zeros((b, self.K) + data_shape, device=device)
+        log_z = self.log_sample_categorical(uniform_logits)
+
+        # Accumulate log probs per sequence
+        trajectory_log_probs = torch.zeros(b, device=device)
+        trajectory_kl = torch.zeros(b, device=device)
+        mask_2d = contact_masks.squeeze(1)  # (B, L, L)
+
+        iterable = reversed(range(0, self.time_steps))
+        if do_pbar:
+            iterable = tqdm(iterable, desc='sampling loop time step (DDPO)', total=self.time_steps)
+
+        for i in iterable:
+            t = torch.full((b,), i, device=device, dtype=torch.long)
+            log_x_t = log_z
+            log_z, log_probs = self.p_sample_with_grad(
+                log_x_t=log_x_t,
+                t=t,
+                fm_condition=fm_condition,
+                u_condition=u_condition * contact_masks,
+                seq_encoding=seq_encoding
+            )
+
+            # Gather log prob of sampled token at each position.
+            # log_sample_categorical returns *log-onehot* (B, K, 1, L, L), not
+            # an index tensor, so convert back to indices before gathering.
+            # log_probs:   (B, K, 1, L, L)
+            # sampled_idx: (B, 1, L, L) LongTensor (values 0 or 1)
+            sampled_idx = log_onehot_to_index(log_z)
+            sampled_log_p = log_probs.gather(1, sampled_idx.unsqueeze(1))  # (B, 1, 1, L, L)
+
+            # Mask and accumulate: sum over spatial dims, apply contact mask
+            sampled_log_p_masked = sampled_log_p.squeeze(1).squeeze(1) * mask_2d  # (B, L, L)
+            trajectory_log_probs += sampled_log_p_masked.sum(dim=(-2, -1))
+
+            # Per-step KL anchor to reference policy at the same x_t. Reference
+            # forward is no-grad: the KL term should only push the *current*
+            # policy back toward the reference.
+            with torch.no_grad():
+                log_probs_ref = ref_p_pred(log_x_t, t)
+            # multinomial_kl returns shape (B, 1, L, L) after summing over K
+            kl_step = self.multinomial_kl(log_probs, log_probs_ref).squeeze(1)
+            trajectory_kl += (kl_step * mask_2d).sum(dim=(-2, -1))
+
+        # Final model probabilities at t=0
+        model_prob = torch.exp(log_probs)[:, 1, :, :, :] * contact_masks
+        pred_x0 = log_onehot_to_index(log_z) * contact_masks
+
+        return pred_x0, model_prob, trajectory_log_probs, trajectory_kl
 
     @torch.no_grad()
     def sample_chain(self, num_samples, fm_condition, u_condition, contact_masks, set_max_len, seq_encoding):

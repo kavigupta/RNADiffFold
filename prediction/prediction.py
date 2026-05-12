@@ -2,7 +2,7 @@
 import torch
 import numpy as np
 import pandas as pd
-from prediction_utils import *
+from .prediction_utils import *
 from tqdm import tqdm
 
 
