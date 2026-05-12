@@ -120,6 +120,11 @@ class DDPOTrainer:
         Returns:
             rewards: (B,) scalar per-sequence correlation
         """
+        assert dms_vals.shape[1] == center_end - center_start, (
+            f"dms_vals length {dms_vals.shape[1]} does not match center window "
+            f"[{center_start}:{center_end}] (size {center_end - center_start})"
+        )
+
         # Marginal: per-position max probability of being paired
         model_prob_2d = model_prob.squeeze(1)  # (B, L_pad, L_pad)
         paired_prob = model_prob_2d.max(dim=-1).values  # (B, L_pad)
