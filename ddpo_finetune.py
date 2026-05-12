@@ -179,9 +179,14 @@ class DDPOTrainer:
             f"[{center_start}:{center_end}] (size {center_len})"
         )
 
-        # Marginal: per-position max probability of being paired
-        model_prob_2d = model_prob.squeeze(1)  # (B, L_pad, L_pad)
-        paired_prob = model_prob_2d.max(dim=-1).values  # (B, L_pad)
+        # Per-position P(paired with anything) under independent-cell semantics:
+        # the differentiable analog of `result.any(2)` used by the eval pipeline
+        # (healsdms accessibility_vs_folding.compute_rna_diff_fold). Compared to
+        # `max(dim=-1)`, prob-OR distributes the gradient across all candidate
+        # partners instead of just the single argmax column.
+        model_prob_2d = model_prob.squeeze(1).clamp(0.0, 1.0)  # (B, L_pad, L_pad)
+        log_unpaired = torch.log1p(-model_prob_2d + 1e-8).sum(dim=-1)  # (B, L_pad)
+        paired_prob = 1.0 - torch.exp(log_unpaired)
 
         # Extract center window
         paired_prob_center = paired_prob[:, center_start:center_end]  # (B, L_center)
@@ -213,6 +218,15 @@ class DDPOTrainer:
         data_seq_raw = data_seq_raw.to(self.device)
         seq_encoding = seq_encoding.to(self.device)
 
+        # The all-ones contact mask below is only correct when no padding region
+        # exists. get_data_from_onehot may round set_max_len up past full_len;
+        # if so the model would compute log-probs / KL over padding positions
+        # and the reward's row-reduction would mix in padded columns. Fail
+        # loudly instead of silently degrading.
+        assert set_max_len == full_len, (
+            f"set_max_len ({set_max_len}) != full_len ({full_len}); "
+            "build a real contact_masks from seq_lengths before relaxing this."
+        )
         contact_masks = torch.ones((batch_size, 1, set_max_len, set_max_len), device=self.device)
 
         # Sample multiple trajectories

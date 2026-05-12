@@ -131,6 +131,17 @@ def main():
         required=True,
         help="Run identifier; checkpoints land in <output_dir>/<run_id>/<epoch>.pt",
     )
+    parser.add_argument(
+        "--max_samples",
+        type=int,
+        default=None,
+        help="Cap on number of DMS regions to load (default: all).",
+    )
+    parser.add_argument(
+        "--non_canonical_bases",
+        action="store_true",
+        help="Include non-canonical bases (default: canonical only).",
+    )
 
     args = parser.parse_args()
 
@@ -152,10 +163,14 @@ def main():
         ckpt_path = f"./ckpt/model_ckpt/{args.checkpoint}.seed.2023.pt"
 
     device = torch.device(args.device)
-    model = load_model_from_checkpoint(ckpt_path, device=args.device)
+    model = load_model_from_checkpoint(ckpt_path, device=device)
 
     # Load DMS dataset
-    dataset = load_dms_data(args.chrom)
+    dataset = load_dms_data(
+        args.chrom,
+        canonical_bases_only=not args.non_canonical_bases,
+        max_samples=args.max_samples,
+    )
 
     # Create collate function for batch processing
     def collate_ddpo(batch):
