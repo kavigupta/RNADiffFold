@@ -39,7 +39,10 @@ def load_model_from_checkpoint(checkpoint_path, device="cuda:0"):
 
     if checkpoint_path:
         ckpt = torch.load(checkpoint_path, map_location="cpu")
-        model.load_state_dict(ckpt)
+        if isinstance(ckpt, dict) and 'model' in ckpt:
+            model.load_state_dict(ckpt['model'])
+        else:
+            model.load_state_dict(ckpt)
         print(f"Loaded checkpoint from {checkpoint_path}")
 
     model = model.to(device)
@@ -157,10 +160,11 @@ def main():
     print("=" * 80)
 
     # Load checkpoint
+    script_dir = Path(__file__).parent
     if args.checkpoint_path:
         ckpt_path = args.checkpoint_path
     else:
-        ckpt_path = f"./ckpt/model_ckpt/{args.checkpoint}.seed.2023.pt"
+        ckpt_path = script_dir / f"ckpt/model_ckpt/{args.checkpoint}.seed.2023.pt"
 
     device = torch.device(args.device)
     model = load_model_from_checkpoint(ckpt_path, device=device)
