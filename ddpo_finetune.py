@@ -106,7 +106,7 @@ class DDPOTrainer:
             [p for p in model.parameters() if p.requires_grad],
             lr=lr
         )
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=100)
+        self.scheduler = None  # created in train() once n_epochs is known
 
     def compute_reward(self, model_prob, dms_vals, center_start=80, center_end=160):
         """Compute correlation reward between predicted structure and DMS.
@@ -218,6 +218,10 @@ class DDPOTrainer:
             checkpoint_dir: where to save checkpoints
         """
         Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=n_epochs
+        )
 
         self.model.train()
 
