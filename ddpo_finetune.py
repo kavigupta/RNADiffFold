@@ -169,9 +169,10 @@ class DDPOTrainer:
         batch_size = paired_prob_center.shape[0]
         rewards = []
         for i in range(batch_size):
-            # Negative correlation: high paired prob → low DMS → negate to get reward
             r = pearson_correlation(paired_prob_center[i], dms_vals[i])
-            rewards.append(-r)  # Negate: high paired prob should give high reward when DMS is low
+            # We want a negative correlation, since high DMS = low pairing.
+            negative_r = -r
+            rewards.append(negative_r)
 
         return torch.stack(rewards)
 
