@@ -12,6 +12,8 @@ import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 
+from prediction.predict_from_onehot import _onehot_to_model_order
+
 
 def pearson_correlation(pred, target, eps=1e-8):
     """Differentiable Pearson correlation coefficient, handling NaN.
@@ -57,7 +59,8 @@ class DDPODataset(torch.utils.data.Dataset):
         """
         self.data = []
         for x, y in contiguous_regions_iter:
-            # Convert one-hot to sequence string
+            # contiguous_regions emits ACGT ordering; the model expects AUCG.
+            x = _onehot_to_model_order(x, "ACGT")
             seq_str = self._onehot_to_sequence(x)
             self.data.append((x, y, seq_str))
 
@@ -66,13 +69,12 @@ class DDPODataset(torch.utils.data.Dataset):
         """Convert one-hot tensor to sequence string.
 
         Args:
-            onehot: (L, 4) tensor with A, C, G, T one-hot encoding
+            onehot: (L, 4) tensor with A, U, C, G one-hot encoding (model order)
 
         Returns:
             sequence: str of length L
         """
-        # onehot uses ACGT ordering (from contiguous_regions)
-        alphabet = "ACGT"
+        alphabet = "AUCG"
         indices = torch.argmax(onehot, dim=-1)  # (L,)
         sequence = "".join(alphabet[idx.item()] for idx in indices)
         return sequence
