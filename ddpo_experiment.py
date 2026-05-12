@@ -7,15 +7,15 @@ Usage:
     python ddpo_experiment.py --checkpoint train --chrom chr1 --n_epochs 5 --batch_size 4
 """
 
-import sys
 import argparse
+import itertools
 import torch
 from pathlib import Path
 
-# Add parent paths for imports
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent / "models"))
-sys.path.insert(0, str(Path(__file__).parent / "prediction"))
+from healsdms.accessibility_model.accessibility_vs_folding import contiguous_regions
+
+from models.model import DiffusionRNA2dPrediction
+from ddpo_finetune import DDPODataset, DDPOTrainer
 
 
 def load_model_from_checkpoint(checkpoint_path, device="cuda:0"):
@@ -28,8 +28,6 @@ def load_model_from_checkpoint(checkpoint_path, device="cuda:0"):
     Returns:
         model: DiffusionRNA2dPrediction instance
     """
-    from models.model import DiffusionRNA2dPrediction
-
     model = DiffusionRNA2dPrediction(
         num_classes=2,
         diffusion_dim=8,
@@ -48,26 +46,20 @@ def load_model_from_checkpoint(checkpoint_path, device="cuda:0"):
     return model
 
 
-def load_dms_data(chrom, healsdms_path, canonical_bases_only=True, max_samples=None):
+def load_dms_data(chrom, canonical_bases_only=True, max_samples=None):
     """Load DMS data via the healsdms pipeline.
 
     Args:
         chrom: chromosome (e.g., "chr1")
-        healsdms_path: filesystem path to the heals-dms repo root
         canonical_bases_only: whether to use only canonical bases
         max_samples: maximum number of samples to load (None = all)
 
     Returns:
         dataset: DDPODataset instance
     """
-    sys.path.insert(0, healsdms_path)
-    from healsdms.accessibility_model.accessibility_vs_folding import contiguous_regions
-    from ddpo_finetune import DDPODataset
-
     contiguous_regions_iter = contiguous_regions(chrom, canonical_bases_only)
 
     if max_samples:
-        import itertools
         contiguous_regions_iter = itertools.islice(contiguous_regions_iter, max_samples)
 
     dataset = DDPODataset(contiguous_regions_iter)
@@ -128,12 +120,6 @@ def main():
         help="Torch device",
     )
     parser.add_argument(
-        "--healsdms_path",
-        type=str,
-        required=True,
-        help="Path to the heals-dms repo root (provides healsdms package)",
-    )
-    parser.add_argument(
         "--output_dir",
         type=str,
         default="./ckpt/model_ckpt",
@@ -169,7 +155,7 @@ def main():
     model = load_model_from_checkpoint(ckpt_path, device=args.device)
 
     # Load DMS dataset
-    dataset = load_dms_data(args.chrom, args.healsdms_path)
+    dataset = load_dms_data(args.chrom)
 
     # Create collate function for batch processing
     def collate_ddpo(batch):
@@ -193,8 +179,6 @@ def main():
     )
 
     # Create trainer
-    from ddpo_finetune import DDPOTrainer
-
     trainer = DDPOTrainer(
         model,
         device,
