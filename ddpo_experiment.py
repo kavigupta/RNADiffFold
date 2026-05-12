@@ -170,18 +170,13 @@ def main():
     def collate_ddpo(batch):
         """Collate function for DDPO dataset.
 
-        batch: list of (x, dms, seq_str) tuples
-        Returns: (x_batch, dms_batch, seq_str_list)
+        batch: list of (x, dms) tuples
+        Returns: (x_batch, dms_batch)
         """
-        x_list, dms_list, seq_strs = zip(*batch)
-
-        # Stack one-hot sequences (they should all have the same shape)
+        x_list, dms_list = zip(*batch)
         x_batch = torch.stack(x_list)
-
-        # Pad DMS values (they should all have the same shape from contiguous_regions)
         dms_batch = torch.stack(dms_list)
-
-        return x_batch, dms_batch, list(seq_strs)
+        return x_batch, dms_batch
 
     # Create data loader
     loader = torch.utils.data.DataLoader(

@@ -7,12 +7,11 @@ network for maximizing Pearson correlation between predicted structure and DMS r
 """
 
 import torch
-import torch.nn as nn
-import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 
 from prediction.predict_from_onehot import _onehot_to_model_order
+from prediction.prediction_utils import get_data_from_onehot
 
 
 def pearson_correlation(pred, target, eps=1e-8):
@@ -61,32 +60,15 @@ class DDPODataset(torch.utils.data.Dataset):
         for x, y in contiguous_regions_iter:
             # contiguous_regions emits ACGT ordering; the model expects AUCG.
             x = _onehot_to_model_order(x, "ACGT")
-            seq_str = self._onehot_to_sequence(x)
-            self.data.append((x, y, seq_str))
-
-    @staticmethod
-    def _onehot_to_sequence(onehot):
-        """Convert one-hot tensor to sequence string.
-
-        Args:
-            onehot: (L, 4) tensor with A, U, C, G one-hot encoding (model order)
-
-        Returns:
-            sequence: str of length L
-        """
-        alphabet = "AUCG"
-        indices = torch.argmax(onehot, dim=-1)  # (L,)
-        sequence = "".join(alphabet[idx.item()] for idx in indices)
-        return sequence
+            self.data.append((x, y))
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        x, y, seq_str = self.data[idx]
-        # Convert y (numpy) to torch tensor
+        x, y = self.data[idx]
         y_tensor = torch.from_numpy(y).float()
-        return x, y_tensor, seq_str
+        return x, y_tensor
 
 
 class DDPOTrainer:
@@ -126,28 +108,6 @@ class DDPOTrainer:
         )
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=100)
 
-    def sequence_to_tokens(self, seq_str):
-        """Convert sequence string to RNA-FM token IDs.
-
-        Args:
-            seq_str: sequence string (e.g., "ACGTACGT")
-
-        Returns:
-            token_ids: LongTensor of token IDs with <cls> and <eos> added
-        """
-        # Use RNA-FM alphabet for tokenization
-        # The alphabet object should have encode method
-        if hasattr(self.alphabet, 'encode'):
-            return self.alphabet.encode(seq_str)
-        else:
-            # Fallback: manually encode
-            # RNA-FM typically: <pad>=0, <unk>=1, <cls>=2, <eos>=3, A=4, C=5, G=6, U=7
-            token_map = {'A': 4, 'C': 5, 'G': 6, 'U': 7, 'T': 7}  # T maps to U
-            tokens = [2]  # <cls>
-            tokens.extend(token_map.get(c, 1) for c in seq_str.upper())
-            tokens.append(3)  # <eos>
-            return torch.tensor(tokens, dtype=torch.long, device=self.device)
-
     def compute_reward(self, model_prob, dms_vals, center_start=80, center_end=160):
         """Compute correlation reward between predicted structure and DMS.
 
@@ -178,49 +138,12 @@ class DDPOTrainer:
 
         return torch.stack(rewards)
 
-    def prepare_data_fcn_2(self, seq_onehot):
-        """Compute data_fcn_2 (outer product features) from one-hot sequence.
-
-        Args:
-            seq_onehot: (B, L, 4) one-hot tensor (A, U, C, G)
-
-        Returns:
-            data_fcn_2: (B, 17, L, L) feature tensor
-        """
-        batch_size, seq_len, _ = seq_onehot.shape
-
-        # Create outer product channels (16 channels from 4×4 combinations)
-        outer_products = []
-        for i in range(4):
-            for j in range(4):
-                prod = torch.einsum("bl,bm->blm", seq_onehot[:, :, i], seq_onehot[:, :, j])
-                outer_products.append(prod)
-
-        outer_stack = torch.stack(outer_products, dim=1)  # (B, 16, L, L)
-
-        # Add creatmat-like channel (simplified: diagonal preference)
-        creatmat = torch.zeros((batch_size, 1, seq_len, seq_len), device=seq_onehot.device, dtype=seq_onehot.dtype)
-        # Simple heuristic: GC and AU base pairs
-        gc_au_score = seq_onehot[:, :, 2:4].sum(dim=2)  # (B, L) - C and G
-        au_score = seq_onehot[:, :, 0:2].sum(dim=2)  # (B, L) - A and U
-        for b in range(batch_size):
-            for i in range(seq_len):
-                for j in range(i + 1, seq_len):
-                    # Simple scoring: give higher weight to canonical pairs
-                    score = (gc_au_score[b, i] * gc_au_score[b, j] + au_score[b, i] * au_score[b, j]) / 2.0
-                    creatmat[b, 0, i, j] = score
-                    creatmat[b, 0, j, i] = score
-
-        data_fcn_2 = torch.cat([outer_stack, creatmat], dim=1)  # (B, 17, L, L)
-        return data_fcn_2
-
-    def ddpo_step(self, batch_x, batch_dms, batch_seq_strs):
+    def ddpo_step(self, batch_x, batch_dms):
         """Single DDPO training step.
 
         Args:
-            batch_x: (B, L_pad, 4) one-hot sequences
+            batch_x: (B, L, 4) one-hot sequences in AUCG order (full length, no end-padding)
             batch_dms: (B, L_center) DMS reactivity values
-            batch_seq_strs: list of B sequence strings
 
         Returns:
             loss: scalar loss
@@ -229,21 +152,16 @@ class DDPOTrainer:
         batch_x = batch_x.to(self.device)
         batch_dms = batch_dms.to(self.device)
 
-        batch_size = batch_x.shape[0]
-        set_max_len = batch_x.shape[1]
+        batch_size, full_len, _ = batch_x.shape
+        seq_lengths = torch.full((batch_size,), full_len, dtype=torch.long, device=batch_x.device)
 
-        # Prepare conditioning inputs
-        data_fcn_2 = self.prepare_data_fcn_2(batch_x).to(self.device)
+        data_fcn_2, data_seq_raw, seq_encoding, _, set_max_len = get_data_from_onehot(
+            batch_x, self.alphabet, seq_lengths=seq_lengths
+        )
+        data_fcn_2 = data_fcn_2.to(self.device)
+        data_seq_raw = data_seq_raw.to(self.device)
+        seq_encoding = seq_encoding.to(self.device)
 
-        # Tokenize sequences for FM model
-        # Pad to max length in batch
-        tokenized = [self.sequence_to_tokens(seq) for seq in batch_seq_strs]
-        max_token_len = max(len(t) for t in tokenized)
-        data_seq_raw = torch.zeros((batch_size, max_token_len), dtype=torch.long, device=self.device)
-        for i, tokens in enumerate(tokenized):
-            data_seq_raw[i, :len(tokens)] = tokens.to(self.device)
-
-        seq_encoding = batch_x
         contact_masks = torch.ones((batch_size, 1, set_max_len, set_max_len), device=self.device)
 
         # Sample multiple trajectories
@@ -298,15 +216,8 @@ class DDPOTrainer:
             n_batches = 0
 
             for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}/{n_epochs}"):
-                # Unpack batch (handle both 2-tuple and 3-tuple formats)
-                if len(batch) == 3:
-                    batch_x, batch_dms, batch_seq_strs = batch
-                else:
-                    batch_x, batch_dms = batch
-                    # Fallback: reconstruct sequence strings from one-hot
-                    batch_seq_strs = [DDPODataset._onehot_to_sequence(x) for x in batch_x]
-
-                loss, reward = self.ddpo_step(batch_x, batch_dms, batch_seq_strs)
+                batch_x, batch_dms = batch
+                loss, reward = self.ddpo_step(batch_x, batch_dms)
 
                 self.optimizer.zero_grad()
                 loss.backward()
