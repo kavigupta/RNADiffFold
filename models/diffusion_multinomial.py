@@ -376,10 +376,13 @@ class MultinomialDiffusion(nn.Module):
                 seq_encoding=seq_encoding
             )
 
-            # Gather log prob of sampled token at each position
-            # log_probs: (B, K, 1, L, L)
-            # log_z:     (B, 1, L, L) LongTensor (values 0 or 1)
-            sampled_log_p = log_probs.gather(1, log_z.unsqueeze(1))  # (B, 1, 1, L, L)
+            # Gather log prob of sampled token at each position.
+            # log_sample_categorical returns *log-onehot* (B, K, 1, L, L), not
+            # an index tensor, so convert back to indices before gathering.
+            # log_probs:   (B, K, 1, L, L)
+            # sampled_idx: (B, 1, L, L) LongTensor (values 0 or 1)
+            sampled_idx = log_onehot_to_index(log_z)
+            sampled_log_p = log_probs.gather(1, sampled_idx.unsqueeze(1))  # (B, 1, 1, L, L)
 
             # Mask and accumulate: sum over spatial dims, apply contact mask
             sampled_log_p_masked = sampled_log_p.squeeze(1).squeeze(1) * mask_2d  # (B, L, L)
