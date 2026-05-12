@@ -13,6 +13,7 @@ import torch
 from pathlib import Path
 
 from healsdms.accessibility_model.accessibility_vs_folding import contiguous_regions
+from healsdms.data.alignment import canonical_segments
 
 from models.model import DiffusionRNA2dPrediction
 from ddpo_finetune import DDPODataset, DDPOTrainer
@@ -46,21 +47,24 @@ def load_model_from_checkpoint(checkpoint_path, device="cuda:0"):
         print(f"Loaded checkpoint from {checkpoint_path}")
 
     model = model.to(device)
+    model.fm_conditioner.eval()
+    for param in model.fm_conditioner.parameters():
+        param.requires_grad = False
     return model
 
 
-def load_dms_data(chrom, canonical_bases_only=True, max_samples=None):
+def load_dms_data(chrom, max_samples=None):
     """Load DMS data via the healsdms pipeline.
 
     Args:
         chrom: chromosome (e.g., "chr1")
-        canonical_bases_only: whether to use only canonical bases
         max_samples: maximum number of samples to load (None = all)
 
     Returns:
         dataset: DDPODataset instance
     """
-    contiguous_regions_iter = contiguous_regions(chrom, canonical_bases_only)
+    cano = canonical_segments()
+    contiguous_regions_iter = contiguous_regions(chrom, cano)
 
     if max_samples:
         contiguous_regions_iter = itertools.islice(contiguous_regions_iter, max_samples)
@@ -140,12 +144,6 @@ def main():
         default=None,
         help="Cap on number of DMS regions to load (default: all).",
     )
-    parser.add_argument(
-        "--non_canonical_bases",
-        action="store_true",
-        help="Include non-canonical bases (default: canonical only).",
-    )
-
     args = parser.parse_args()
 
     print("=" * 80)
@@ -172,7 +170,6 @@ def main():
     # Load DMS dataset
     dataset = load_dms_data(
         args.chrom,
-        canonical_bases_only=not args.non_canonical_bases,
         max_samples=args.max_samples,
     )
 
